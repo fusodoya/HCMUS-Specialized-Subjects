@@ -1,0 +1,607 @@
+\documentclass[4pt,journal,compsoc]{IEEEtran}
+\usepackage{hyperref}
+\usepackage{multirow}
+\usepackage[english]{babel}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{float}
+
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{amsmath}
+
+\usepackage[usenames,dvipsnames]{color}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{xcolor}
+
+\usepackage{listings}
+
+\usepackage{array} 
+\graphicspath{ {./images/} }
+\ifCLASSOPTIONcompsoc
+  \usepackage[nocompress]{cite}
+\else
+  \usepackage{cite}
+\fi
+
+\ifCLASSINFOpdf
+\else
+\fi
+\hyphenation{op-tical net-works semi-conduc-tor}
+
+\title{
+    \begin{flushleft}
+        \textbf{\Huge An overview of gradient descent optimization algorithms} \newline
+        
+        \textbf{\textcolor{gray}{\large Gradient descent is the preferred way to optimize neural networks and many other machine learning algorithms but is often used as a black box. This post explores how many of the most popular gradient-based optimization algorithms such as Momentum, Adagrad, and Adam actually work.}}\newline
+        
+        \includegraphics[width = 18cm]{P001.PNG}
+        
+    \end{flushleft}
+}
+
+
+\begin{document}
+    \maketitle
+
+    \begin{flushleft}
+    
+    This post explores how many of the most popular gradient-based optimization algorithms actually work. \newline
+
+    Note: If you are looking for a review paper, this blog post is also available as an \underline{article on arXiv}. \newline
+    Update 20.03.2020: Added a note on \underline{recent optimizers}. \newline
+
+    Update 09.02.2018: Added \underline{AMSGrad}. \newline
+
+    Update 24.11.2017: Most of the content in this article is now also available as \underline{slides}. \newline
+
+    Update 15.06.2017: Added derivations of \underline{AdaMax} and \underline{Nadam}. \newline
+
+    Update 21.06.16: This post was posted to Hacker News. The \underline{discussion} provides some interesting pointers to related work and other techniques. \newline
+
+    Table of contents: \newline
+    
+    \begin{itemize}
+        \item \underline{Gradient descent variants}
+        \begin{itemize}
+            \item \underline{Batch gradient descent}
+            \item \underline{Stochastic gradient descent}
+            \item \underline{Mini-batch gradient descent}
+        \end{itemize}
+        
+        \item \underline{Challenges}
+        
+        \item \underline{Gradient descent optimization algorithms}
+        \begin{itemize}
+            \item \underline{Momentum}
+            \item \underline{Nesterov accelerated gradient}
+            \item \underline{Adagrad}
+            \item \underline{Adadelta}
+            \item \underline{RMSprop}
+            \item \underline{Adam}
+            \item \underline{AdaMax}
+            \item \underline{Nadam}
+            \item \underline{AMSGrad}
+            \item \underline{Other recent optimizers}
+            \item \underline{Visualization of algorithms}
+            \item \underline{Which optimizer to use?}
+
+        \end{itemize}
+        
+        \item \underline{Parallelizing and distributing SGD}
+        \begin{itemize}
+            \item \underline{Hogwild!}
+            \item \underline{Downpour SGD}
+            \item \underline{Delay-tolerant Algorithms for SGD}
+            \item \underline{TensorFlow}
+            \item \underline{Elastic Averaging SGD}
+        \end{itemize}
+        
+        \item \underline{Additional strategies for optimizing SGD}
+        \begin{itemize}
+            \item \underline{Shuffling and Curriculum Learning}
+            \item \underline{Batch normalization}
+            \item \underline{Early Stopping}
+            \item \underline{Gradient noise}
+        \end{itemize}
+        
+        \item \underline{Conclusion}
+        
+        \item \underline{References}
+    \end{itemize}
+    
+    Gradient descent is one of the most popular algorithms to perform optimization and by far the most common way to optimize neural networks. At the same time, every state-of-the-art Deep Learning library contains implementations of various algorithms to optimize gradient descent (e.g. lasagne's, caffe's, and keras' documentation). These algorithms, however, are often used as black-box optimizers, as practical explanations of their strengths and weaknesses are hard to come by. \newline
+
+    This blog post aims at providing you with intuitions towards the behaviour of different algorithms for optimizing gradient descent that will help you put them to use. We are first going to look at the different variants of gradient descent. We will then briefly summarize challenges during training. Subsequently, we will introduce the most common optimization algorithms by showing their motivation to resolve these challenges and how this leads to the derivation of their update rules. We will also take a short look at algorithms and architectures to optimize gradient descent in a parallel and distributed setting. Finally, we will consider additional strategies that are helpful for optimizing gradient descent. \newline
+
+    Gradient descent is a way to minimize an objective function $J(\theta)$ parameterized by a model's parameters $\theta \in \mathbb{R} ^ d$ by updating the parameters in the opposite direction of the gradient of the objective function $\nabla _ \theta J(\theta)$ w.r.t. to the parameters. The learning rate $\eta$ determines the size of the steps we take to reach a (local) minimum. In other words, we follow the direction of the slope of the surface created by the objective function downhill until we reach a valley. If you are unfamiliar with gradient descent, you can find a good introduction on optimizing neural networks \underline{here}. \newline \newline
+    
+    \textbf{\Large Gradient descent variants} \newline
+    
+    There are three variants of gradient descent, which differ in how much data we use to compute the gradient of the objective function. Depending on the amount of data, we make a trade-off between the accuracy of the parameter update and the time it takes to perform an update. \newline \newline
+    
+    
+    \textbf{\Large Batch gradient descent} \newline
+    
+    Vanilla gradient descent, aka batch gradient descent, computes the gradient of the cost function w.r.t. to the parameters $\theta$ for the entire training dataset: \newline
+    
+    $\theta = \theta - \eta \cdot \nabla _ \theta J(\theta)$. \newline
+    
+    As we need to calculate the gradients for the whole dataset to perform just \textit{one} update, batch gradient descent can be very slow and is intractable for datasets that don't fit in memory. Batch gradient descent also doesn't allow us to update our model \textit{online}, i.e. with new examples on-the-fly. \newline
+    
+    In code, batch gradient descent looks something like this: \newline
+            
+    \begin{tabular}{|||c|} 
+        \hline
+        \begin{lstlisting}[language=Python]
+for i in range(nb_epochs):
+
+  params_grad = evaluate_gradient(loss_function
+                                , data, params)
+    
+  params = params - learning_rate * params_grad
+        \end{lstlisting} \\
+        \hline
+        \end{tabular} \newline \newline
+    
+    For a pre-defined number of epochs, we first compute the gradient vector \fcolorbox{gray}{white}{\textcolor{red}{params\_grad}} of the loss function for the whole dataset w.r.t. our parameter vector \fcolorbox{gray}{white}{\textcolor{red}{params}}. Note that state-of-the-art deep learning libraries provide automatic differentiation that efficiently computes the gradient w.r.t. some parameters. If you derive the gradients yourself, then gradient checking is a good idea. (See \underline{here} for some great tips on how to check gradients properly.) \newline
+    
+    We then update our parameters in the opposite direction of the gradients with the learning rate determining how big of an update we perform. Batch gradient descent is guaranteed to converge to the global minimum for convex error surfaces and to a local minimum for non-convex surfaces. \newline \newline
+    
+    \textbf{\Large Stochastic gradient descent} \newline
+    
+    Stochastic gradient descent (SGD) in contrast performs a parameter update for each training example $x ^ {(i)}$ and label $y ^ {(i)}$: \newline
+    
+    $\theta = \theta - \eta \cdot \nabla _ \theta J(\theta; x ^ {(i)}; y ^ {(i)})$. \newline
+    
+    Batch gradient descent performs redundant computations for large datasets, as it recomputes gradients for similar examples before each parameter update. SGD does away with this redundancy by performing one update at a time. It is therefore usually much faster and can also be used to learn online. \newline
+    
+    SGD performs frequent updates with a high variance that cause the objective function to fluctuate heavily as in Image 1. \newline
+    
+    \begin{center}
+        \includegraphics[width = 4cm]{P002.PNG} \newline
+        \textcolor{gray}{Image 1: SGD fluctuation (Source: \underline{Wikipedia})} \newline
+    \end{center}
+    
+    While batch gradient descent converges to the minimum of the basin the parameters are placed in, SGD's fluctuation, on the one hand, enables it to jump to new and potentially better local minima. On the other hand, this ultimately complicates convergence to the exact minimum, as SGD will keep overshooting. However, it has been shown that when we slowly decrease the learning rate, SGD shows the same convergence behaviour as batch gradient descent, almost certainly converging to a local or the global minimum for non-convex and convex optimization respectively. \newline
+    
+    Its code fragment simply adds a loop over the training examples and evaluates the gradient w.r.t. each example. Note that we shuffle the training data at every epoch as explained in this section. \newline
+    
+    \begin{tabular}{|||c|} 
+        \hline
+        \begin{lstlisting}[language=Python]
+for i in range(nb_epochs):
+
+  np.random.shuffle(data)
+  
+  for example in data:
+  
+    params_grad = evaluate_gradient(loss
+             _function, example, params)
+                                  
+    params = params - learning_rate 
+                           * params_grad
+        \end{lstlisting} \\
+        \hline
+        \end{tabular} \newline \newline
+    
+    \textbf{\Large Mini-batch gradient descent} \newline
+    
+   Mini-batch gradient descent finally takes the best of both worlds and performs an update for every mini-batch of $n$ training examples: \newline
+    
+    $\theta = \theta - \eta \cdot \nabla _ \theta J(\theta; x ^ {(i : i + n)}; y ^ {(i : i + n)})$. \newline
+    
+    This way, it $a)$ reduces the variance of the parameter updates, which can lead to more stable convergence; and $b)$ can make use of highly optimized matrix optimizations common to state-of-the-art deep learning libraries that make computing the gradient w.r.t. a mini-batch very efficient. Common mini-batch sizes range between 50 and 256, but can vary for different applications. Mini-batch gradient descent is typically the algorithm of choice when training a neural network and the term SGD usually is employed also when mini-batches are used. Note: In modifications of SGD in the rest of this post, we leave out the parameters $x ^ {(i : i + n)}$; $y ^ {(i : i + n)}$ for simplicity. \newline
+    
+    In code, instead of iterating over examples, we now iterate over mini-batches of size 50: \newline
+    
+        \begin{tabular}{|||c|} 
+        \hline
+        \begin{lstlisting}[language=Python]
+for i in range(nb_epochs):
+
+  np.random.shuffle(data)
+  
+  for batch in get_batches(data, batch_size=50):
+                    
+    params_grad = evaluate_gradient(loss_function
+                                 , batch, params)
+      
+    params = params - learning_rate * params_grad
+        \end{lstlisting} \\
+        \hline
+        \end{tabular} \newline \newline
+    
+    \textbf{\Large Challenges} \newline
+    
+    Vanilla mini-batch gradient descent, however, does not guarantee good convergence, but offers a few challenges that need to be addressed: \newline
+    
+    \begin{itemize}
+        \item Choosing a proper learning rate can be difficult. A learning rate that is too small leads to painfully slow convergence, while a learning rate that is too large can hinder convergence and cause the loss function to fluctuate around the minimum or even to diverge.
+        
+        \item Learning rate schedules $^ {[1]}$ try to adjust the learning rate during training by e.g. annealing, i.e. reducing the learning rate according to a pre-defined schedule or when the change in objective between epochs falls below a threshold. These schedules and thresholds, however, have to be defined in advance and are thus unable to adapt to a dataset's characteristics $ ^ {[2]}$.
+        
+        \item Additionally, the same learning rate applies to all parameter updates. If our data is sparse and our features have very different frequencies, we might not want to update all of them to the same extent, but perform a larger update for rarely occurring features.
+        
+        \item Another key challenge of minimizing highly non-convex error functions common for neural networks is avoiding getting trapped in their numerous suboptimal local minima. Dauphin et al. $^ {[3]}$ argue that the difficulty arises in fact not from local minima but from saddle points, i.e. points where one dimension slopes up and another slopes down. These saddle points are usually surrounded by a plateau of the same error, which makes it notoriously hard for SGD to escape, as the gradient is close to zero in all dimensions. \newline \newline 
+    \end{itemize} 
+    
+    \textbf{\Large Gradient descent optimization algorithms} \newline
+    
+    In the following, we will outline some algorithms that are widely used by the deep learning community to deal with the aforementioned challenges. We will not discuss algorithms that are infeasible to compute in practice for high-dimensional data sets, e.g. second-order methods such as \underline{Newton's method}. \newline \newline
+    
+    \textbf{\Large Momentum} \newline
+    
+    SGD has trouble navigating ravines, i.e. areas where the surface curves much more steeply in one dimension than in another $ ^ {[4]}$, which are common around local optima. In these scenarios, SGD oscillates across the slopes of the ravine while only making hesitant progress along the bottom towards the local optimum as in Image 2. \newline
+    
+
+    \begin{tabular}{|c|c|} 
+        \hline \\
+        \includegraphics[width = 4cm]{P004.PNG} & \includegraphics[width = 4cm]{P003.PNG}\\ 
+        
+        \textcolor{gray}{Image 2:} &
+        \textcolor{gray}{Image 3:} \\
+        
+        \textcolor{gray}{SGD without momentum} &
+        \textcolor{gray}{SGD with momentum} \\
+        \hline
+    \end{tabular} \newline \newline
+    
+    Momentum $^ {[5]}$ is a method that helps accelerate SGD in the relevant direction and dampens oscillations as can be seen in Image 3. It does this by adding a fraction $\gamma$ of the update vector of the past time step to the current update vector: \newline
+    
+    $v_t = \gamma v_{t-1} - \eta \nabla _ \theta J(\theta)$ \\
+    $\theta = \theta - v_t$ \newline
+    
+    Note: Some implementations exchange the signs in the equations. The momentum term $\gamma$ is usually set to 0.9 or a similar value.\newline
+    
+    Essentially, when using momentum, we push a ball down a hill. The ball accumulates momentum as it rolls downhill, becoming faster and faster on the way (until it reaches its terminal velocity if there is air resistance, i.e. $\gamma < 1$). The same thing happens to our parameter updates: The momentum term increases for dimensions whose gradients point in the same directions and reduces updates for dimensions whose gradients change directions. As a result, we gain faster convergence and reduced oscillation. \newline \newline
+    
+    \textbf{\Large Nesterov accelerated gradient} \newline
+    
+   However, a ball that rolls down a hill, blindly following the slope, is highly unsatisfactory. We'd like to have a smarter ball, a ball that has a notion of where it is going so that it knows to slow down before the hill slopes up again. \newline
+   
+   Nesterov accelerated gradient (NAG) [6] is a way to give our momentum term this kind of prescience. We know that we will use our momentum term $\gamma v_{t - 1}$ to move the parameters $\theta$. Computing $\theta - \gamma v_{t - 1}$ thus gives us an approximation of the next position of the parameters (the gradient is missing for the full update), a rough idea where our parameters are going to be. We can now effectively look ahead by calculating the gradient not w.r.t. to our current parameters $\theta$ but w.r.t. the approximate future position of our parameters: \newline
+   
+   $v_t = \gamma v_{t-1} - \eta \nabla _ \theta J(\theta - \gamma v_{t-1})$ \\
+    $\theta = \theta - v_t$ \newline
+    
+    Again, we set the momentum term $\gamma$ to a value of around 0.9. While Momentum first computes the current gradient (small blue vector in Image 4) and then takes a big jump in the direction of the updated accumulated gradient (big blue vector), NAG first makes a big jump in the direction of the previous accumulated gradient (brown vector), measures the gradient and then makes a correction (red vector), which results in the complete NAG update (green vector). This anticipatory update prevents us from going too fast and results in increased responsiveness, which has significantly increased the performance of RNNs on a number of tasks $ ^ {[7]}$. \newline
+    
+    \begin{center}
+        \includegraphics[width = 4cm]{P005.PNG} \newline
+        \textcolor{gray}{Image 4: Nesterov update (Source:  \underline{G. Hinton's lecture 6c})} \newline
+    \end{center}
+    
+    Refer to \underline{here} for another explanation about the intuitions behind NAG, while Ilya Sutskever gives a more detailed overview in his PhD thesis $^ {[8]}$. \newline
+
+    Now that we are able to adapt our updates to the slope of our error function and speed up SGD in turn, we would also like to adapt our updates to each individual parameter to perform larger or smaller updates depending on their importance. \newline \newline
+    
+    \textbf{\Large Adagrad} \newline
+
+    Adagrad $^ {[9]}$ is an algorithm for gradient-based optimization that does just this: It adapts the learning rate to the parameters, performing smaller updates (i.e. low learning rates) for parameters associated with frequently occurring features, and larger updates (i.e. high learning rates) for parameters associated with infrequent features. For this reason, it is well-suited for dealing with sparse data. Dean et al. $^ {[10]}$ have found that Adagrad greatly improved the robustness of SGD and used it for training large-scale neural nets at Google, which -- among other things -- learned to recognize cats in Youtube videos. Moreover, Pennington et al. $^ {[11]}$ used Adagrad to train GloVe word embeddings, as infrequent words require much larger updates than frequent ones. \newline
+    
+    Previously, we performed an update for all parameters $\theta$ at once as every parameter $\theta_i$ used the same learning rate $\eta$. As Adagrad uses a different learning rate for every parameter $\theta_i$ at every time step $t$, we first show Adagrad's per-parameter update, which we then vectorize. For brevity, we use $g_t$ to denote the gradient at time step $t$. $g_{t, i}$ is then the partial derivative of the objective function w.r.t. to the parameter $\theta_i$ at time step $t$: \newline
+    
+    $g_{t, i} = \nabla_\theta J(\theta_{t, i})$. \newline
+    
+    The SGD update for every parameter $\theta_i$ at each time step $t$ then becomes: \newline
+    
+    $\theta_{t+1, i} = \theta_{t, i} - \eta \cdot g_{t, i}$. \newline
+    
+    In its update rule, Adagrad modifies the general learning rate $eta$ at each time step $t$ for every parameter $\theta_t$ based on the past gradients that have been computed for $\theta_i$: \newline
+    
+    $\theta_{t+1, i} = \theta_{t, i} - \frac{\eta}{\sqrt{G_{t, ii} + \epsilon}} \cdot g_{t, i}$. \newline
+    
+    $G_t \in \mathbb{R} ^ {d \times d}$ here is a diagonal matrix where each diagonal element $i, i$ is the sum of the squares of the gradients w.r.t. $\theta_i$ up to time step $t ^ {[12]}$, while $\epsilon$ is a smoothing term that avoids division by zero (usually on the order of $1e-8$). Interestingly, without the square root operation, the algorithm performs much worse. \newline
+    
+    As $G_t$ contains the sum of the squares of the past gradients w.r.t. to all parameters $\theta$ along its diagonal, we can now vectorize our implementation by performing a matrix-vector product $\odot$ between $G_t$ and $g_t$: \newline
+    
+    $\theta_{t + 1} = \theta_t - \frac{\eta}{\sqrt{G_t + \epsilon}} \odot g_{t, i}$. \newline
+    
+    One of Adagrad's main benefits is that it eliminates the need to manually tune the learning rate. Most implementations use a default value of 0.01 and leave it at that. \newline
+
+    Adagrad's main weakness is its accumulation of the squared gradients in the denominator: Since every added term is positive, the accumulated sum keeps growing during training. This in turn causes the learning rate to shrink and eventually become infinitesimally small, at which point the algorithm is no longer able to acquire additional knowledge. The following algorithms aim to resolve this flaw. \newline \newline
+    
+    \textbf{\Large Adadelta} \newline
+    
+    Adadelta $^ {[13]}$ is an extension of Adagrad that seeks to reduce its aggressive, monotonically decreasing learning rate. Instead of accumulating all past squared gradients, Adadelta restricts the window of accumulated past gradients to some fixed size $w$. \newline
+    
+    Instead of inefficiently storing $w$ previous squared gradients, the sum of gradients is recursively defined as a decaying average of all past squared gradients. The running average $E[g^2]_t$ at time step $t$ then depends (as a fraction $\gamma$ similarly to the Momentum term) only on the previous average and the current gradient: \newline
+    
+    $E[g^2]_t = \gamma E[g^2]_{t-1} + (1 - \gamma)g_t^2$. \newline
+    
+    We set $\gamma$ to a similar value as the momentum term, around 0.9. For clarity, we now rewrite our vanilla SGD update in terms of the parameter update vector $\Delta \theta_t$: \newline
+    
+    $\Delta \theta_t = - \eta \cdot g_{t, i}$ \\
+    $\theta_{t + 1} = \theta_t + \Delta \theta_t $ \newline
+    
+    The parameter update vector of Adagrad that we derived previously thus takes the form: \newline
+    
+    $\Delta \theta_t = - \frac{\eta}{\sqrt{G_t + \epsilon}} \odot g_t$. \newline
+    
+    We now simply replace the diagonal matrix $G_t$ with the decaying average over past squared gradients $E[g^2]_t$: \newline
+    
+    $\Delta \theta_t = - \frac{\eta}{\sqrt{E[g^2]_t + \epsilon}} g_t$. \newline
+    
+    As the denominator is just the root mean squared (RMS) error criterion of the gradient, we can replace it with the criterion short-hand: \newline
+    
+    $\Delta \theta_t = - \frac{\eta}{RMS[g]_t} g_t$. \newline
+    
+    The authors note that the units in this update (as well as in SGD, Momentum, or Adagrad) do not match, i.e. the update should have the same hypothetical units as the parameter. To realize this, they first define another exponentially decaying average, this time not of squared gradients but of squared parameter updates: \newline
+    
+    $E[\Delta \theta ^ 2]_t = \gamma E[\Delta \theta ^ 2]_{t - 1} + (1 - \gamma) \Delta_t ^ 2$. \newline
+    
+    The root mean squared error of parameter updates is thus: \newline
+    
+    $RMS[\Delta \theta]_t = \sqrt{E[\Delta \theta ^ 2]_t + \epsilon}$. \newline
+    
+    Since $RMS[\Delta \theta]_t$ is unknown, we approximate it with the RMS of parameter updates until the previous time step. Replacing the learning rate $\eta$ in the previous update rule with $RMS[\Delta \theta]_{t - 1}$ finally yields the Adadelta update rule: \newline
+    
+    $\Delta \theta_t = - \frac{RMS[\Delta \theta]_{t-1}}{RMS[g]_t}g_t$ \\
+    $\theta_{t+1} = \theta_t + \Delta \theta_t$ \newline
+    
+    With Adadelta, we do not even need to set a default learning rate, as it has been eliminated from the update rule. \newline \newline
+    
+    \textbf{\Large RMSprop} \newline
+
+    RMSprop is an unpublished, adaptive learning rate method proposed by Geoff Hinton in \underline{Lecture 6e of his Coursera}. \newline
+    
+    RMSprop and Adadelta have both been developed independently around the same time stemming from the need to resolve Adagrad's radically diminishing learning rates. RMSprop in fact is identical to the first update vector of Adadelta that we derived above: \newline
+    
+    $E[g^2]_t = 0.9 E[g^2]_{t-1} + 0.1 g^2_t$\\
+    $\theta_{t+1} = \theta_{t} - \frac{\eta}{\sqrt{E[g^2]_t + \epsilon}} g_{t}$ \newline
+    
+    RMSprop as well divides the learning rate by an exponentially decaying average of squared gradients. Hinton suggests $\gamma$ to be set to $0.9$, while a good default value for the learning rate $\eta$ is $0.001$. \newline \newline
+    
+    \textbf{\Large Adam} \newline
+    
+    Adaptive Moment Estimation (Adam) $^ {[14]}$ is another method that computes adaptive learning rates for each parameter. In addition to storing an exponentially decaying average of past squared gradients $v_t$ like Adadelta and RMSprop, Adam also keeps an exponentially decaying average of past gradients $m_t$, similar to momentum: \newline
+    
+    $m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$\\
+    $v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2$ \newline
+
+    $m_t$ and $v_t$ are estimates of the first moment (the mean) and the second moment (the uncentered variance) of the gradients respectively, hence the name of the method. As $m_t$ and $v_t$ are initialized as vectors of $0$'s, the authors of Adam observe that they are biased towards zero, especially during the initial time steps, and especially when the decay rates are small (i.e. $\beta_1$ and $\beta_2$ are close to $1$). \newline
+    
+    They counteract these biases by computing bias-corrected first and second moment estimates: \newline
+
+    $\hat{m}_t = \frac{m_t}{1 - \beta^t_1}$\\
+    $\hat{v}_t = \frac{v_t}{1 - \beta^t_2}$ \newline
+    
+    They then use these to update the parameters just as we have seen in Adadelta and RMSprop, which yields the Adam update rule: \newline
+    
+    $\theta_{t+1} = \theta_{t} - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \hat{m}_t$ \newline
+
+    The authors propose default values of $0.9$ for $\beta_1$, $0.999$ for $\beta_2$, and $10^{-8}$ for $\epsilon$. They show empirically that Adam works well in practice and compares favorably to other adaptive learning-method algorithms. \newline \newline
+    
+    \textbf{\Large AdaMax} \newline
+    
+    The $v_t$ factor in the Adam update rule scales the gradient inversely proportionally to the $\ell_2$ norm of the past gradients (via the $v_{t-1}$ term) and current gradient $|g_t|^2$: \newline
+    
+    $v_t = \beta_2 v_{t-1} + (1 - \beta_2) |g_t|^2$ \newline
+
+    We can generalize this update to the $\ell_p$ norm. Note that Kingma and Ba also parameterize $\beta_2$ as $\beta^p_2$: \newline
+    
+    $v_t = \beta_2^p v_{t-1} + (1 - \beta_2^p) |g_t|^p$ \newline
+
+    Norms for large $p$ values generally become numerically unstable, which is why $\ell_1$ and $\ell_2$ norms are most common in practice. However, $\ell_\infty$ also generally exhibits stable behavior. For this reason, the authors propose AdaMax $^ {[15]}$ and show that $v_t$ with $\ell_\infty$ converges to the following more stable value. To avoid confusion with Adam, we use $u_t$ to denote the infinity norm-constrained $v_t$: \newline
+    
+    $u_t = \beta_2^\infty v_{t-1} + (1 - \beta_2^\infty) |g_t|^\infty$\\
+    $ = \max(\beta_2 \cdot v_{t-1}, |g_t|)$ \newline
+    
+    We can now plug this into the Adam update equation by replacing $\sqrt{\hat{v}_t} + \epsilon$ with $u_t$ to obtain the AdaMax update rule: \newline
+    
+    $\theta_{t+1} = \theta_{t} - \frac{\eta}{u_t} \hat{m}_t$ \newline
+
+    Note that as $u_t$ relies on the $\max$ operation, it is not as suggestible to bias towards zero as $m_t$ and $v_t$ in Adam, which is why we do not need to compute a bias correction for $u_t$. Good default values are again $\eta = 0.002$, $\beta_1 = 0.9$, and $\beta_2 = 0.999$. \newline \newline
+    
+    \textbf{\Large Nadam} \newline
+    
+    As we have seen before, Adam can be viewed as a combination of RMSprop and momentum: RMSprop contributes the exponentially decaying average of past squared gradients $v_t$, while momentum accounts for the exponentially decaying average of past gradients $m_t$. We have also seen that Nesterov accelerated gradient (NAG) is superior to vanilla momentum. \newline
+    
+    Nadam (Nesterov-accelerated Adaptive Moment Estimation) $ {[16]}$thus combines Adam and NAG. In order to incorporate NAG into Adam, we need to modify its momentum term $m_t$. \newline
+    
+    First, let us recall the momentum update rule using our current notation : \newline
+
+    $g_t = \nabla_{\theta_t}J(\theta_t)$\\
+    $m_t = \gamma m_{t-1} + \eta g_t$\\
+    $\theta_{t+1} = \theta_t - m_t$ \newline
+    
+    where $J$ is our objective function, $\gamma$ is the momentum decay term, and $\eta$ is our step size. Expanding the third equation above yields: \newline
+    
+    $\theta_{t+1} = \theta_t - ( \gamma m_{t-1} + \eta g_t)$ \newline
+
+    This demonstrates again that momentum involves taking a step in the direction of the previous momentum vector and a step in the direction of the current gradient. \newline
+    
+    NAG then allows us to perform a more accurate step in the gradient direction by updating the parameters with the momentum step \emph{before} computing the gradient. We thus only need to modify the gradient $g_t$ to arrive at NAG: \newline
+
+    $g_t = \nabla_{\theta_t}J(\theta_t - \gamma m_{t-1})$\\
+    $m_t = \gamma m_{t-1} + \eta g_t$\\
+    $\theta_{t+1} = \theta_t - m_t$ \newline
+
+    
+    Dozat proposes to modify NAG the following way: Rather than applying the momentum step twice -- one time for updating the gradient $g_t$ and a second time for updating the parameters $\theta_{t+1}$ -- we now apply the look-ahead momentum vector directly to update the current parameters: \newline
+    
+    $g_t = \nabla_{\theta_t}J(\theta_t)$\\
+    $m_t = \gamma m_{t-1} + \eta g_t$\\
+    $\theta_{t+1} = \theta_t - (\gamma m_t + \eta g_t)$ \newline
+
+    
+    Notice that rather than utilizing the previous momentum vector $m_{t-1}$ as in Equation of the expanded momentum update rule above, we now use the current momentum vector $m_t$ to look ahead. In order to add Nesterov momentum to Adam, we can thus similarly replace the previous momentum vector with the current momentum vector. First, recall that the Adam update rule is the following (note that we do not need to modify $\hat{v}_t$): \newline
+    
+    $m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$\\
+    $\hat{m}_t = \frac{m_t}{1 - \beta^t_1}$\\
+    $\theta_{t+1} = \theta_{t} - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} \hat{m}_t$ \newline
+    
+    Expanding the second equation with the definitions of $\hat{m}_t$ and $m_t$ in turn gives us: \newline
+    
+    $\theta_{t+1} = \theta_{t} - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} (\frac{\beta_1 m_{t-1}}{1 - \beta^t_1} + \frac{(1 - \beta_1) g_t}{1 - \beta^t_1})$ \newline
+
+    Note that $\frac{\beta_1 m_{t-1}}{1 - \beta^t_1}$ is just the bias-corrected estimate of the momentum vector of the previous time step. We can thus replace it with $\hat{m}_{t-1}$: \newline
+    
+    $\theta_{t+1} = \theta_{t} - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} (\beta_1 \hat{m}_{t-1} + \frac{(1 - \beta_1) g_t}{1 - \beta^t_1})$ \newline
+
+    This equation looks very similar to our expanded momentum term in Equation. We can now add Nesterov momentum just as we did in Equation by simply replacing this bias-corrected estimate of the momentum vector of the previous time step $\hat{m}_{t-1}$ with the bias-corrected estimate of the current momentum vector $\hat{m}_t$, which gives us the Nadam update rule: \newline
+    
+    $\theta_{t+1} = \theta_{t} - \frac{\eta}{\sqrt{\hat{v}_t} + \epsilon} (\beta_1 \hat{m}_t + \frac{(1 - \beta_1) g_t}{1 - \beta^t_1})$ \newline \newline 
+    
+    \textbf{\Large AMSGrad} \newline
+    
+    As adaptive learning rate methods have become the norm in training neural networks, practitioners noticed that in some cases, e.g. for object recognition $^ {[17]}$ or machine translation $^ {[18]}$ they fail to converge to an optimal solution and are outperformed by SGD with momentum. \newline
+
+    Reddi et al. (2018) $^ {[19]}$ formalize this issue and pinpoint the exponential moving average of past squared gradients as a reason for the poor generalization behaviour of adaptive learning rate methods. Recall that the introduction of the exponential average was well-motivated: It should prevent the learning rates to become infinitesimally small as training progresses, the key flaw of the Adagrad algorithm. However, this short-term memory of the gradients becomes an obstacle in other scenarios. \newline
+
+    In settings where Adam converges to a suboptimal solution, it has been observed that some minibatches provide large and informative gradients, but as these minibatches only occur rarely, exponential averaging diminishes their influence, which leads to poor convergence. The authors provide an example for a simple convex optimization problem where the same behaviour can be observed for Adam. \newline
+
+    To fix this behaviour, the authors propose a new algorithm, AMSGrad that uses the maximum of past squared gradients $v_t$ rather than the exponential average to update the parameters. $v_t$ is defined the same as in Adam above: \newline
+    
+    $v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t^2$ \newline
+    
+    Instead of using $v_t$ (or its bias-corrected version $\hat{v_t}$) directly, we now employ the previous $v_{t-1}$ if it is larger than the current one: \newline
+    
+    $\hat{v_t} = \max (\hat{v_{t-1}}, v_t)$ \newline
+    
+    This way, AMSGrad results in a non-increasing step size, which avoids the problems suffered by Adam. For simplicity, the authors also remove the debiasing step that we have seen in Adam. The full AMSGrad update without bias-corrected estimates can be seen below: \newline
+    
+    $m_t = \beta_1 m_{t-1} + (1 - \beta_1) g_t$\\
+    $v_t = \beta_2 v_{t-1} + (1 - \beta_2) g_t ^ 2$ \\
+    $\hat{v_t} = \max (\hat{v_{t-1}}, v_t)$ \\
+    $\theta_{t+1} = \theta_t - \frac{\eta}{\sqrt{\hat{v_t}} + \epsilon} m_t$ \newline
+    
+    The authors observe improved performance compared to Adam on small datasets and on CIFAR-10. \underline{Other experiments}, however, show similar or worse performance than Adam. It remains to be seen whether AMSGrad is able to consistently outperform Adam in practice. For more information about recent advances in Deep Learning optimization, refer to \underline{this blog post}. \newline \newline
+    
+    \textbf{\Large Other recent optimizers} \newline
+    
+    A number of other optimizers have been proposed after AMSGrad. These include AdamW $^ {[20]}$, which fixes weight decay in Adam; QHAdam $^ {[21]}$, which averages a standard SGD step with a momentum SGD step; and AggMo $^ {[22]}$, which combines multiple momentum terms $\gamma$; and others. For an overview of recent gradient descent algorithms, have a look at this blog post. \newline \newline
+    
+    \textbf{\Large Visualization of algorithms} \newline
+    
+    The following two animations (Image credit: \underline{Alec Radford}) provide some intuitions towards the optimization behaviour of most of the presented optimization methods. Also have a look \underline{here} for a description of the same images by Karpathy and another concise overview of the algorithms discussed. \newline
+
+    In Image 5, we see their behaviour on the contours of a loss surface (\underline{the Beale function}) over time. Note that Adagrad, Adadelta, and RMSprop almost immediately head off in the right direction and converge similarly fast, while Momentum and NAG are led off-track, evoking the image of a ball rolling down the hill. NAG, however, is quickly able to correct its course due to its increased responsiveness by looking ahead and heads to the minimum. \newline
+
+    Image 6 shows the behaviour of the algorithms at a saddle point, i.e. a point where one dimension has a positive slope, while the other dimension has a negative slope, which pose a difficulty for SGD as we mentioned before. Notice here that SGD, Momentum, and NAG find it difficulty to break symmetry, although the two latter eventually manage to escape the saddle point, while Adagrad, RMSprop, and Adadelta quickly head down the negative slope. \newline
+    
+    \begin{tabular}{|c|c|} 
+        \hline \\
+        
+        \includegraphics[width = 4cm]{P006.PNG} & \includegraphics[width = 4cm]{P007.PNG}\\ 
+        
+        \textcolor{gray}{Image 5: SGD optimization} &
+        \textcolor{gray}{Image 6: SGD optimization} \\
+        
+        \textcolor{gray}{on loss surface contours} &
+        \textcolor{gray}{on saddle point} \\
+        \hline
+    \end{tabular} \newline \newline
+    
+    As we can see, the adaptive learning-rate methods, i.e. Adagrad, Adadelta, RMSprop, and Adam are most suitable and provide the best convergence for these scenarios. \newline
+    
+    Note: If you are interested in visualizing these or other optimization algorithms, refer to \underline{this useful tutorial}. \newline \newline
+    
+    \textbf{\Large Which optimizer to use?} \newline
+    
+    So, which optimizer should you use? If your input data is sparse, then you likely achieve the best results using one of the adaptive learning-rate methods. An additional benefit is that you will not need to tune the learning rate but will likely achieve the best results with the default value. \newline
+    
+    In summary, RMSprop is an extension of Adagrad that deals with its radically diminishing learning rates. It is identical to Adadelta, except that Adadelta uses the RMS of parameter updates in the numerator update rule. Adam, finally, adds bias-correction and momentum to RMSprop. Insofar, RMSprop, Adadelta, and Adam are very similar algorithms that do well in similar circumstances. Kingma et al. $^ {[14:1]}$ show that its bias-correction helps Adam slightly outperform RMSprop towards the end of optimization as gradients become sparser. Insofar, Adam might be the best overall choice. \newline
+    
+    Interestingly, many recent papers use vanilla SGD without momentum and a simple learning rate annealing schedule. As has been shown, SGD usually achieves to find a minimum, but it might take significantly longer than with some of the optimizers, is much more reliant on a robust initialization and annealing schedule, and may get stuck in saddle points rather than local minima. Consequently, if you care about fast convergence and train a deep or complex neural network, you should choose one of the adaptive learning rate methods. \newline
+    
+    \textbf{\Large Parallenlizing} \newline
+    \label{sec:parallelizing}
+    
+    Given the ubiquity of large-scale data solutions and the availability of low-commodity clusters, distributing SGD to speed it up further is an obvious choice. \newline
+    
+    SGD by itself is inherently sequential: Step-by-step, we progress further towards the minimum. Running it provides good convergence but can be slow particularly on large datasets. In contrast, running SGD asynchronously is faster, but suboptimal communication between workers can lead to poor convergence. Additionally, we can also parallelize SGD on one machine without the need for a large computing cluster. The following are algorithms and architectures that have been proposed to optimize parallelized and distributed SGD. \newline \newline
+    
+    \textbf{\Large Hogwild!} \newline
+    
+    Niu et al. $^ {[23]}$ introduce an update scheme called Hogwild! that allows performing SGD updates in parallel on CPUs. Processors are allowed to access shared memory without locking the parameters. This only works if the input data is sparse, as each update will only modify a fraction of all parameters. They show that in this case, the update scheme achieves almost an optimal rate of convergence, as it is unlikely that processors will overwrite useful information. \newline \newline
+    
+    \textbf{\Large Downpour SGD} \newline
+    
+    Downpour SGD is an asynchronous variant of SGD that was used by Dean et al. $^ {[10:1}$ in their DistBelief framework (the predecessor to TensorFlow) at Google. It runs multiple replicas of a model in parallel on subsets of the training data. These models send their updates to a parameter server, which is split across many machines. Each machine is responsible for storing and updating a fraction of the model's parameters. However, as replicas don't communicate with each other e.g. by sharing weights or updates, their parameters are continuously at risk of diverging, hindering convergence. \newline \newline
+    
+    \textbf{\Large Delay-tolerant Algorithms for SGD} \newline
+    
+    McMahan and Streeter $^ {[24]}$ extend AdaGrad to the parallel setting by developing delay-tolerant algorithms that not only adapt to past gradients, but also to the update delays. This has been shown to work well in practice. \newline \newline
+    
+    \textbf{\Large TensorFlow} \newline
+    
+    \underline{TensorFlow} $^ {[25]}$ Google's recently open-sourced framework for the implementation and deployment of large-scale machine learning models. It is based on their experience with DistBelief and is already used internally to perform computations on a large range of mobile devices as well as on large-scale distributed systems. For distributed execution, a computation graph is split into a subgraph for every device and communication takes place using Send/Receive node pairs. However, the open source version of TensorFlow currently does not support distributed functionality (see \underline{here}). \\
+    Update 13.04.16: A distributed version of TensorFlow has \underline{been released}. \newline \newline
+    
+    \textbf{\Large Elastic Averaging SGD} \newline
+    
+    Zhang et al. $^ {[26]}$ propose Elastic Averaging SGD (EASGD), which links the parameters of the workers of asynchronous SGD with an elastic force, i.e. a center variable stored by the parameter server. This allows the local variables to fluctuate further from the center variable, which in theory allows for more exploration of the parameter space. They show empirically that this increased capacity for exploration leads to improved performance by finding new local optima.\newline \newline
+    
+    \textbf{\Large Additional strategies for optimizing SGD} \newline
+    \label{sec:strategies}
+    
+    Finally, we introduce additional strategies that can be used alongside any of the previously mentioned algorithms to further improve the performance of SGD. For a great overview of some other common tricks, refer to $^ {[27]}$. \newline \newline
+    
+    \textbf{\Large Shuffling and Curriculum Learning} \newline
+    \label{sec:shuffling}
+    
+    Generally, we want to avoid providing the training examples in a meaningful order to our model as this may bias the optimization algorithm. Consequently, it is often a good idea to shuffle the training data after every epoch. \newline
+    
+    On the other hand, for some cases where we aim to solve progressively harder problems, supplying the training examples in a meaningful order may actually lead to improved performance and better convergence. The method for establishing this meaningful order is called Curriculum Learning $^ {[28]}$. \newline
+    
+    Zaremba and Sutskever $^ {[29]}$ were only able to train LSTMs to evaluate simple programs using Curriculum Learning and show that a combined or mixed strategy is better than the naive one, which sorts examples by increasing difficulty. \newline \newline
+    
+    \textbf{\Large Batch normalization} \newline
+    
+    To facilitate learning, we typically normalize the initial values of our parameters by initializing them with zero mean and unit variance. As training progresses and we update parameters to different extents, we lose this normalization, which slows down training and amplifies changes as the network becomes deeper. \newline
+    
+    Batch normalization $^ [30]$ reestablishes these normalizations for every mini-batch and changes are back-propagated through the operation as well. By making normalization part of the model architecture, we are able to use higher learning rates and pay less attention to the initialization parameters. Batch normalization additionally acts as a regularizer, reducing (and sometimes even eliminating) the need for Dropout. \newline \newline
+    
+    \textbf{\Large Early stopping} \newline
+    
+    According to Geoff Hinton: "\textit{Early stopping (is) beautiful free lunch}" (\underline{NIPS 2015 Tutorial slides}, slide 63). You should thus always monitor error on a validation set during training and stop (with some patience) if your validation error does not improve enough. \newline \newline
+    
+    \textbf{\Large Gradient noise} \newline
+    
+    Neelakantan et al. $^ {[31]}$ add noise that follows a Gaussian distribution $N(0, \sigma^2_t)$ to each gradient update: \newline
+    
+    $g_{t, i} = g_{t, i} + N(0, \sigma^2_t)$ \newline
+
+    They anneal the variance according to the following schedule: \newline
+    
+    $\sigma^2_t = \frac{\eta}{(1 + t)^\gamma}$ \newline
+
+    They show that adding this noise makes networks more robust to poor initialization and helps training particularly deep and complex networks. They suspect that the added noise gives the model more chances to escape and find new local minima, which are more frequent for deeper models. \newline \newline
+    
+    \textbf{\Large Conclusion} \newline
+    
+    In this article, we have initially looked at the three variants of gradient descent, among which mini-batch gradient descent is the most popular. We have then investigated algorithms that are most commonly used for optimizing SGD: Momentum, Nesterov accelerated gradient, Adagrad, Adadelta, RMSprop, Adam, AdaMax, Nadam, as well as different algorithms to optimize asynchronous SGD. Finally, we've considered other strategies to improve SGD such as shuffling and curriculum learning, batch normalization, and early stopping.\newline
+    
+    I hope that this blog post was able to provide you with some intuitions towards the motivation and the behaviour of the different optimization algorithms. Are there any obvious algorithms to improve SGD that I've missed? What tricks are you using yourself to facilitate training with SGD? \textbf{Let me know in the comments below}. \newline \newline
+    
+    \textbf{\Large Acknowledgements} \newline
+     
+    Thanks to \underline{Denny Britz} and \underline{Cesar Salgado} for reading drafts of this post and providing suggestions. \newline \newline
+     
+    \textbf{\Large Printable version and citation
+} \newline
+     
+    This blog post is also available as an \underline{article on arXiv}, in case you want to refer to it later. \newline
+
+    In case you found it helpful, consider citing the corresponding arXiv article as: \\
+    \textit{Sebastian Ruder (2016). An overview of gradient descent optimisation algorithms. arXiv preprint arXiv:1609.04747}. \newline \newline
+    
+    \textbf{\Large Translations} \newline
+        
+    This blog post has been translated into the following languages: \newline
+    
+    \begin{itemize}
+        \item \underline{Japanese}
+        \item \underline{Chinese}
+        \item \underline{Korean} \newline
+    \end{itemize}
+    
+    Image credit for cover photo: \underline{Karpathy's beautiful loss functions tumblr}
+    
+    \end{flushleft} 
+    
+\end{document}
+
+
