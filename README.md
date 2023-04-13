@@ -2,7 +2,7 @@
 
 # Semester 1
 
-**00>**
+**00:**
 
 Code: CSC00004
 
@@ -12,7 +12,8 @@ Module: [Introduction To-Information Technology](https://github.com/fusodoya/HCM
 
 <br/>
 
-**01>**
+**01:**
+
 Code: CSC00001
 
 Module: [Introduction To Programming](https://github.com/fusodoya/HCMUS-Specialized-Subjects/tree/main/Semester%201/Introduction-To-Programming)
@@ -21,7 +22,7 @@ Module: [Introduction To Programming](https://github.com/fusodoya/HCMUS-Speciali
 
 # Semester 2
 
-**01>**
+**01:**
 Code: CSC00002
 
 Module: [Advanced Programming](https://github.com/fusodoya/HCMUS-Specialized-Subjects/tree/main/Semester%202/Advanced-Programming)
